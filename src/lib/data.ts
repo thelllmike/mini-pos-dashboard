@@ -2,6 +2,7 @@ import 'server-only';
 
 import { requireAdmin } from './session';
 import { adminClient } from './supabase';
+import type { ParsedRow } from './csv';
 import type { BusinessType } from './format';
 
 /**
@@ -336,4 +337,216 @@ export async function updateShop(id: string, patch: ShopPatch): Promise<void> {
     meta: { admin_phone: admin.phone },
   });
   if (log.error) throw new Error(`Saved, but could not write the activity log: ${log.error.message}`);
+}
+
+// ------------------------------------------------------------ products (CSV)
+
+export interface ImportResult {
+  added: number;
+  updated: number;
+  priceChanges: number;
+  /** Already in the shop and left alone because "update existing" was off. */
+  skippedExisting: number;
+  /** "Line 7: No selling price" — rows the sheet itself got wrong. */
+  rejected: string[];
+}
+
+export async function getItemCount(shopId: string): Promise<number> {
+  await requireAdmin();
+  const { count, error } = await adminClient()
+    .from('items').select('id', { count: 'exact', head: true })
+    .eq('shop_id', shopId).eq('is_active', true);
+  if (error) fail('products', error);
+  return count ?? 0;
+}
+
+/**
+ * Imports a CSV of products into one shop, by the app's rules.
+ *
+ * - Categories are matched by name without regard to case; missing ones are made.
+ * - A barcode already in the shop is that item: updated when `overwrite`, else
+ *   left alone. Matched by lookup rather than upsert, because the unique index
+ *   on (shop_id, barcode) is partial and ON CONFLICT cannot target it.
+ * - Stock is not imported. It moves only through receive_stock() and sales.
+ * - One activity_log entry for the whole sheet, so the owner sees it happened.
+ */
+export async function importItems(shopId: string, rows: ParsedRow[], overwrite: boolean): Promise<ImportResult> {
+  const admin = await requireAdmin();
+  const db = adminClient();
+
+  const rejected: string[] = [];
+  const seenBarcodes = new Set<string>();
+  const valid: ParsedRow[] = [];
+  for (const row of rows) {
+    if (row.errors.length > 0) { rejected.push(`Line ${row.line}: ${row.errors.join(', ')}`); continue; }
+    if (row.barcode) {
+      if (seenBarcodes.has(row.barcode)) { rejected.push(`Line ${row.line}: barcode ${row.barcode} is on an earlier line too`); continue; }
+      seenBarcodes.add(row.barcode);
+    }
+    valid.push(row);
+  }
+
+  const result: ImportResult = { added: 0, updated: 0, priceChanges: 0, skippedExisting: 0, rejected };
+  if (valid.length === 0) return result;
+
+  // Categories.
+  const cats = await db.from('categories').select('id, name').eq('shop_id', shopId);
+  if (cats.error) fail('categories', cats.error);
+  const categoryId = new Map((cats.data ?? []).map((c) => [String(c.name).trim().toLowerCase(), String(c.id)]));
+  const missing = [...new Set(valid.map((r) => r.category?.trim()).filter((n): n is string => !!n))]
+    .filter((n) => !categoryId.has(n.toLowerCase()));
+  if (missing.length > 0) {
+    const made = await db.from('categories')
+      .insert(missing.map((name, i) => ({ shop_id: shopId, name, sort_order: categoryId.size + i })))
+      .select('id, name');
+    if (made.error) fail('new categories', made.error);
+    for (const c of made.data ?? []) categoryId.set(String(c.name).trim().toLowerCase(), String(c.id));
+  }
+
+  // Which barcodes the shop already has.
+  const existing = new Map<string, { id: string; sell_price_cents: number }>();
+  const barcodes = [...seenBarcodes];
+  for (let i = 0; i < barcodes.length; i += 200) {
+    const found = await db.from('items').select('id, barcode, sell_price_cents')
+      .eq('shop_id', shopId).in('barcode', barcodes.slice(i, i + 200));
+    if (found.error) fail('existing products', found.error);
+    for (const it of found.data ?? []) {
+      existing.set(String(it.barcode), { id: String(it.id), sell_price_cents: Number(it.sell_price_cents) });
+    }
+  }
+
+  const fields = (r: ParsedRow) => ({
+    category_id: (r.category && categoryId.get(r.category.trim().toLowerCase())) || null,
+    name: r.name,
+    name_si: r.nameSi,
+    barcode: r.barcode,
+    sell_price_cents: r.sellPriceCents,
+    cost_price_cents: r.costPriceCents,
+    min_stock: r.minStock,
+  });
+
+  const fresh: ReturnType<typeof fields>[] = [];
+  for (const row of valid) {
+    const match = row.barcode ? existing.get(row.barcode) : undefined;
+    if (!match) { fresh.push(fields(row)); continue; }
+    if (!overwrite) { result.skippedExisting += 1; continue; }
+
+    const { error } = await db.from('items').update({ ...fields(row), is_active: true }).eq('id', match.id);
+    if (error) throw new Error(`Could not update line ${row.line}: ${error.message}`);
+    result.updated += 1;
+    if (match.sell_price_cents !== row.sellPriceCents) result.priceChanges += 1;
+  }
+
+  for (let i = 0; i < fresh.length; i += 500) {
+    const chunk = fresh.slice(i, i + 500).map((f) => ({ ...f, shop_id: shopId, is_active: true }));
+    const { error } = await db.from('items').insert(chunk);
+    if (error) throw new Error(`Could not add products: ${error.message}`);
+    result.added += chunk.length;
+  }
+
+  const log = await db.from('activity_log').insert({
+    shop_id: shopId,
+    actor_name: 'Platform admin',
+    action: 'item.admin_import',
+    entity: 'items',
+    summary: 'Platform admin imported products from a CSV',
+    detail: [
+      `${result.added} added`,
+      `${result.updated} updated`,
+      result.priceChanges ? `${result.priceChanges} price changes` : null,
+      result.skippedExisting ? `${result.skippedExisting} already there, left alone` : null,
+      result.rejected.length ? `${result.rejected.length} lines refused` : null,
+    ].filter(Boolean).join(' · '),
+    meta: { admin_phone: admin.phone },
+  });
+  if (log.error) throw new Error(`Imported, but could not write the activity log: ${log.error.message}`);
+
+  return result;
+}
+
+// ------------------------------------------------------------ passwords
+
+/**
+ * Sets a person's app password. The old password stops working at once; a
+ * handset already signed in stays signed in. Logged in every shop the person
+ * belongs to, so the owner sees it.
+ */
+export async function setUserPassword(userId: string, password: string): Promise<void> {
+  const admin = await requireAdmin();
+  const db = adminClient();
+
+  const { error } = await db.auth.admin.updateUserById(userId, { password });
+  if (error) throw new Error(`Could not set the password: ${error.message}`);
+
+  const members = await db.from('shop_users').select('shop_id, display_name').eq('user_id', userId);
+  if (members.error) throw new Error(`Password set, but could not write the activity log: ${members.error.message}`);
+
+  if ((members.data ?? []).length > 0) {
+    const log = await db.from('activity_log').insert((members.data ?? []).map((m) => ({
+      shop_id: m.shop_id,
+      actor_name: 'Platform admin',
+      action: 'user.admin_password',
+      entity: 'shop_users',
+      summary: `Platform admin set a new password for ${m.display_name}`,
+      meta: { admin_phone: admin.phone, user_id: userId },
+    })));
+    if (log.error) throw new Error(`Password set, but could not write the activity log: ${log.error.message}`);
+  }
+}
+
+// ------------------------------------------------------------ trends
+
+export interface DayTotal {
+  /** YYYY-MM-DD in Asia/Colombo. */
+  date: string;
+  cents: number;
+  bills: number;
+}
+
+const colomboDate = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Completed sales per day for the last `days` days, oldest first, with empty
+ * days present as zero so the chart has no gaps. Voided bills are left out.
+ * Narrow by one shop or by business type.
+ */
+export async function getDailySales(opts: { shopId?: string; type?: BusinessType; days?: number } = {}): Promise<DayTotal[]> {
+  await requireAdmin();
+  const db = adminClient();
+  const days = opts.days ?? 30;
+
+  let shopIds: string[] | null = opts.shopId ? [opts.shopId] : null;
+  if (!shopIds && opts.type) {
+    const shops = await db.from('shops').select('id').eq('business_type', opts.type);
+    if (shops.error) fail('shops', shops.error);
+    shopIds = (shops.data ?? []).map((s) => String(s.id));
+    if (shopIds.length === 0) shopIds = ['00000000-0000-0000-0000-000000000000'];
+  }
+
+  const totals = new Map<string, DayTotal>();
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const date = colomboDate.format(new Date(today.getTime() - i * 86_400_000));
+    totals.set(date, { date, cents: 0, bills: 0 });
+  }
+  const since = new Date(today.getTime() - (days + 1) * 86_400_000).toISOString();
+
+  // Paged: PostgREST returns at most 1000 rows per request.
+  for (let from = 0; ; from += 1000) {
+    let query = db.from('bills').select('total_cents, business_at')
+      .eq('status', 'completed').gte('business_at', since)
+      .order('business_at').range(from, from + 999);
+    if (shopIds) query = query.in('shop_id', shopIds);
+    const { data, error } = await query;
+    if (error) fail('sales', error);
+    for (const b of data ?? []) {
+      const slot = totals.get(colomboDate.format(new Date(String(b.business_at))));
+      if (slot) { slot.cents += Number(b.total_cents); slot.bills += 1; }
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+
+  return [...totals.values()];
 }
