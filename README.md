@@ -18,7 +18,9 @@ Supabase project as the app.
 
 On a shop's page you can also **import products from a CSV** (the same columns
 and rules as the app's Import screen) and see that shop's 30-day sales chart.
-On a shop's page and on Users you can **set anyone's app password**.
+On a shop's page and on Users you can **set anyone's app password**, and on a
+shop's page you can **set the owner's PIN** (the one that opens the app's admin
+area) — this needs migration `0019_admin_set_owner_pin.sql`.
 
 ## Setup
 
@@ -52,9 +54,9 @@ On a shop's page and on Users you can **set anyone's app password**.
   file is the only caller of the service role client. Keep it that way: add new
   queries there, not in a page.
 - **The writes** are `updateShop()` (name, business type), `importItems()`
-  (products from CSV) and `setUserPassword()`. Each records an `activity_log`
+  (products from CSV) and `setUserPassword()`, `setOwnerPin()`. Each records an `activity_log`
   entry the owner can see: `shop.admin_edit`, `item.admin_import`,
-  `user.admin_password`.
+  `user.admin_password`, `user.admin_pin_set`.
 - **The import never touches stock.** Stock moves only through
   `receive_stock()` and sales, as in the app. Existing products are matched by
   barcode with a lookup, not an upsert: the unique index on (shop_id, barcode)
