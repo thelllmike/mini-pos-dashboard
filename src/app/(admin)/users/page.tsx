@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { SearchBox, Select } from "@/components/Filter";
 import { SetPassword } from "@/components/SetPassword";
+import { SetPin } from "@/components/SetPin";
 import { Badge, PageHeader, Table, Td } from "@/components/ui";
 import { getUsers } from "@/lib/data";
 import { day, phone, when } from "@/lib/format";
@@ -36,7 +37,7 @@ export default async function UsersPage({ searchParams }: PageProps<"/users">) {
 
       <Table
         empty={shown.length === 0}
-        head={[{ label: "Name" }, { label: "Phone" }, { label: "Role" }, { label: "Shop" }, { label: "Last sign-in" }, { label: "Joined" }, { label: "Password" }]}
+        head={[{ label: "Name" }, { label: "Phone" }, { label: "Role" }, { label: "Shop" }, { label: "Last sign-in" }, { label: "Joined" }, { label: "Password / PIN" }]}
       >
         {shown.map((u) => (
           <tr key={u.key}>
@@ -56,7 +57,13 @@ export default async function UsersPage({ searchParams }: PageProps<"/users">) {
             </Td>
             <Td muted className="whitespace-nowrap">{when(u.last_sign_in_at)}</Td>
             <Td muted className="whitespace-nowrap">{day(u.joined_at)}</Td>
-            <Td>{u.user_id ? <SetPassword userId={u.user_id} name={u.name} /> : "—"}</Td>
+            <Td>
+              <div className="flex flex-col items-start gap-1">
+                {u.user_id ? <SetPassword userId={u.user_id} name={u.name} /> : "—"}
+                {/* For an owner row, key is the shop_users id the PIN belongs to. */}
+                {u.role === "owner" && <SetPin shopUserId={u.key} name={u.name} />}
+              </div>
+            </Td>
           </tr>
         ))}
       </Table>
