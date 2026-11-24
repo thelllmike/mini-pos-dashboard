@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "admin-password": "node scripts/set-admin-password.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

@@ -10,6 +10,8 @@ export const env = {
   anonKey: process.env.SUPABASE_ANON_KEY ?? '',
   serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
   sessionSecret: process.env.SESSION_SECRET ?? '',
+  // Optional. When set, sign-in checks this instead of the Supabase password.
+  adminPasswordHash: process.env.ADMIN_PASSWORD_HASH ?? '',
   adminPhones: (process.env.ADMIN_PHONES ?? '')
     .split(',')
     .map((p) => normalisePhone(p))

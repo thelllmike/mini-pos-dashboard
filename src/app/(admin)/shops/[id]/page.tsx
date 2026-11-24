@@ -1,9 +1,12 @@
 import { notFound } from "next/navigation";
 
 import { Badge, Card, PageHeader, SectionTitle, Stat, StatusBadge, Table, Td, TypeBadge } from "@/components/ui";
-import { getShop } from "@/lib/data";
+import { SalesChart } from "@/components/SalesChart";
+import { SetPassword } from "@/components/SetPassword";
+import { getDailySales, getItemCount, getShop } from "@/lib/data";
 import { day, money, phone, when } from "@/lib/format";
 import { EditShop } from "./EditShop";
+import { ImportProducts } from "./ImportProducts";
 
 // The plain sentences from the app's "Users & roles" screen.
 const PERMISSIONS: Record<string, string> = {
@@ -16,7 +19,7 @@ const PERMISSIONS: Record<string, string> = {
 
 export default async function ShopPage({ params }: PageProps<"/shops/[id]">) {
   const { id } = await params;
-  const data = await getShop(id);
+  const [data, sales, itemCount] = await Promise.all([getShop(id), getDailySales({ shopId: id }), getItemCount(id)]);
   if (!data) notFound();
   const { shop, stats, members, bills, activity } = data;
 
@@ -42,10 +45,16 @@ export default async function ShopPage({ params }: PageProps<"/shops/[id]">) {
       <SectionTitle>Shop details</SectionTitle>
       <Card><EditShop id={shop.id} name={shop.name} nameSi={shop.name_si} type={shop.business_type} /></Card>
 
+      <SectionTitle>Sales, last 30 days</SectionTitle>
+      <Card className="p-4"><SalesChart days={sales} /></Card>
+
+      <SectionTitle>Products</SectionTitle>
+      <Card><ImportProducts id={shop.id} itemCount={itemCount} /></Card>
+
       <SectionTitle>Users</SectionTitle>
       <Table
         empty={members.length === 0}
-        head={[{ label: "Name" }, { label: "Phone" }, { label: "Role" }, { label: "Can" }, { label: "Last sign-in" }, { label: "Added" }]}
+        head={[{ label: "Name" }, { label: "Phone" }, { label: "Role" }, { label: "Can" }, { label: "Last sign-in" }, { label: "Added" }, { label: "Password" }]}
       >
         {members.map((m) => (
           <tr key={m.id}>
@@ -62,6 +71,7 @@ export default async function ShopPage({ params }: PageProps<"/shops/[id]">) {
             </Td>
             <Td muted className="whitespace-nowrap">{when(m.last_sign_in_at)}</Td>
             <Td muted className="whitespace-nowrap">{day(m.created_at)}</Td>
+            <Td>{m.user_id ? <SetPassword userId={m.user_id} name={m.display_name} /> : "—"}</Td>
           </tr>
         ))}
       </Table>

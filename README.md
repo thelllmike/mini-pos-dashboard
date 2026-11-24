@@ -13,7 +13,12 @@ Supabase project as the app.
 | Shop detail | Its users and what each may do, latest 50 bills, latest 50 activity entries. Rename the shop or change its business type |
 | Users | Everyone who can sign in, their role and shop, last sign-in. Includes people who signed up and never created a shop |
 | Bills | The latest 200 bills across all shops |
+| Trends | Completed sales per day for the last 7, 30 or 90 days, all shops or one business type, and totals by type |
 | Activity | The latest 200 activity-log entries across all shops |
+
+On a shop's page you can also **import products from a CSV** (the same columns
+and rules as the app's Import screen) and see that shop's 30-day sales chart.
+On a shop's page and on Users you can **set anyone's app password**.
 
 ## Setup
 
@@ -37,15 +42,23 @@ Supabase project as the app.
 - **The service role key bypasses every RLS policy.** It is read only in
   `src/lib/supabase.ts`, on the server. It is not `NEXT_PUBLIC_`, and nothing in
   the browser talks to Supabase.
-- **Sign-in is two checks.** The phone must be in `ADMIN_PHONES`, and Supabase
-  must accept the password. Then the dashboard sets its own signed, httpOnly
+- **Sign-in is two checks.** The phone must be in `ADMIN_PHONES`, and the
+  password must match `ADMIN_PASSWORD_HASH`, the dashboard's own admin password
+  (change it with `npm run admin-password -- 'new password'`). With no
+  `ADMIN_PASSWORD_HASH` set, it falls back to the person's app password. Then the dashboard sets its own signed, httpOnly
   cookie (12 hours). The allow-list is re-checked on every request, so removing
   a number locks that person out at once.
 - **Every function in `src/lib/data.ts` begins with `requireAdmin()`.** That
   file is the only caller of the service role client. Keep it that way: add new
   queries there, not in a page.
-- **The one write** is `updateShop()` — shop name and business type — and it
-  records an `activity_log` entry (`shop.admin_edit`) the owner can see.
+- **The writes** are `updateShop()` (name, business type), `importItems()`
+  (products from CSV) and `setUserPassword()`. Each records an `activity_log`
+  entry the owner can see: `shop.admin_edit`, `item.admin_import`,
+  `user.admin_password`.
+- **The import never touches stock.** Stock moves only through
+  `receive_stock()` and sales, as in the app. Existing products are matched by
+  barcode with a lookup, not an upsert: the unique index on (shop_id, barcode)
+  is partial, and `ON CONFLICT` cannot target a partial index.
 
 Before putting this on the internet: host it somewhere that keeps
 `SUPABASE_SERVICE_ROLE_KEY` as a secret, serve it over HTTPS only, and keep

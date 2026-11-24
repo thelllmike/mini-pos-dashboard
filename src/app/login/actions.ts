@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { env, missingEnv, normalisePhone } from "@/lib/env";
+import { checkAdminPassword } from "@/lib/password";
 import { createSession, destroySession } from "@/lib/session";
 import { anonClient } from "@/lib/supabase";
 
@@ -23,11 +24,17 @@ export async function login(_: LoginState, form: FormData): Promise<LoginState> 
 
   if (!env.adminPhones.includes(phone)) return { error: REFUSED };
 
-  const { data, error } = await anonClient().auth.signInWithPassword({
-    phone: `+${phone}`,
-    password,
-  });
-  if (error || !data.user) return { error: REFUSED };
+  // A dashboard-only admin password, when one is configured, so the admin's app
+  // password is not also the key to every shop. Otherwise, the Supabase password.
+  if (env.adminPasswordHash) {
+    if (!checkAdminPassword(password, env.adminPasswordHash)) return { error: REFUSED };
+  } else {
+    const { data, error } = await anonClient().auth.signInWithPassword({
+      phone: `+${phone}`,
+      password,
+    });
+    if (error || !data.user) return { error: REFUSED };
+  }
 
   await createSession(phone);
   redirect("/");

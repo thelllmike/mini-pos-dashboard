@@ -12,7 +12,7 @@ export default async function LoginPage() {
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4 py-10">
       <h1 className="text-3xl font-bold tracking-tight">Mobile POS Admin</h1>
       <p className="mb-6 mt-1 text-sm text-muted">
-        Sign in with the same phone number and password you use in the app.
+        Sign in with your admin phone number and the dashboard admin password.
       </p>
 
       {missing.length > 0 ? (
