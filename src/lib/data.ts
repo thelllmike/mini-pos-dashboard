@@ -550,3 +550,21 @@ export async function getDailySales(opts: { shopId?: string; type?: BusinessType
 
   return [...totals.values()];
 }
+
+// ------------------------------------------------------------ owner PIN
+
+/**
+ * Gives an owner a new admin-area PIN (4–6 digits). Hashed in the database by
+ * admin_set_owner_pin() (migration 0019), which also writes activity_log.
+ */
+export async function setOwnerPin(shopUserId: string, pin: string): Promise<void> {
+  const admin = await requireAdmin();
+  const { error } = await adminClient().rpc('admin_set_owner_pin', {
+    p_shop_user_id: shopUserId, p_pin: pin, p_admin: admin.phone,
+  });
+  if (!error) return;
+  if (/admin_set_owner_pin|schema cache|does not exist/i.test(error.message)) {
+    throw new Error('Run migration 0019_admin_set_owner_pin.sql on Supabase first.');
+  }
+  throw new Error(`Could not set the PIN: ${error.message}`);
+}

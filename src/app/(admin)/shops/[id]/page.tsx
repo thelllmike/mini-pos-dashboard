@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Badge, Card, PageHeader, SectionTitle, Stat, StatusBadge, Table, Td, TypeBadge } from "@/components/ui";
 import { SalesChart } from "@/components/SalesChart";
 import { SetPassword } from "@/components/SetPassword";
+import { SetPin } from "@/components/SetPin";
 import { getDailySales, getItemCount, getShop } from "@/lib/data";
 import { day, money, phone, when } from "@/lib/format";
 import { EditShop } from "./EditShop";
@@ -54,7 +55,7 @@ export default async function ShopPage({ params }: PageProps<"/shops/[id]">) {
       <SectionTitle>Users</SectionTitle>
       <Table
         empty={members.length === 0}
-        head={[{ label: "Name" }, { label: "Phone" }, { label: "Role" }, { label: "Can" }, { label: "Last sign-in" }, { label: "Added" }, { label: "Password" }]}
+        head={[{ label: "Name" }, { label: "Phone" }, { label: "Role" }, { label: "Can" }, { label: "Last sign-in" }, { label: "Added" }, { label: "Password / PIN" }]}
       >
         {members.map((m) => (
           <tr key={m.id}>
@@ -71,7 +72,12 @@ export default async function ShopPage({ params }: PageProps<"/shops/[id]">) {
             </Td>
             <Td muted className="whitespace-nowrap">{when(m.last_sign_in_at)}</Td>
             <Td muted className="whitespace-nowrap">{day(m.created_at)}</Td>
-            <Td>{m.user_id ? <SetPassword userId={m.user_id} name={m.display_name} /> : "—"}</Td>
+            <Td>
+              <div className="flex flex-col items-start gap-1">
+                {m.user_id ? <SetPassword userId={m.user_id} name={m.display_name} /> : "—"}
+                {m.role === "owner" && <SetPin shopUserId={m.id} name={m.display_name} />}
+              </div>
+            </Td>
           </tr>
         ))}
       </Table>
